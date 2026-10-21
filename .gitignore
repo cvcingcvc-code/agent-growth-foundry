@@ -16,3 +16,4 @@ data/reports/*
 *.safetensors
 *.pt
 checkpoints/
+*.egg-info/
