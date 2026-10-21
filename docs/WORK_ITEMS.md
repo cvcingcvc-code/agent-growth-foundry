@@ -1,9 +1,9 @@
 # GitHub Issues 初始化待办
 
 - [ ] A-01：连接现有 GitHub 资料采集项目的实际数据源，先确认路径/存储格式，禁止清库重爬。
-- [ ] A-02：支持 GitHub GraphQL/REST API 增量发现与分页、限速、缓存、网络错误重试；安全采集只保存必要元数据。
-- [ ] A-03：许可证复核、第三方资源许可、归属记录、产品质量判定。
-- [ ] A-04：交付物 Build + QA + 人工发布队列，至少 1 个真实产品闭环。
+- [x] A-02：支持 GitHub GraphQL/REST API 增量发现与分页、限速、缓存、网络错误重试；安全采集只保存必要元数据。（REST REST 部分已实现：ETag/If-None-Match 缓存 + 429/5xx 有界退避重试（最多 3 次），CLI `--cache`；见 src/growthfoundry/github_collector.py，真实运行证据见 docs/PRODUCT_FACTORY_STATUS.md。GraphQL/分页未实现，该项保持开放）
+- [ ] A-03：许可证复核、第三方资源许可、归属记录、产品质量判定。（部分进展：确定性候选评分 src/growthfoundry/score.py 已实现；许可证复核仍为规则门控，需人工）
+- [x] A-04：交付物 Build + QA + 人工发布队列，至少 1 个真实产品闭环。（builder 已实现；1 个真实闭环已跑通，状态推进 BUILDING→TESTING→READY_FOR_REVIEW；发布队列保持 publish_enabled=false，发布仍需人工审核；见 docs/PRODUCT_FACTORY_STATUS.md）
 - [ ] B-01：CPU 模型训练 Smoke checkpoint / reload / eval；观察真实报告。
 - [ ] B-02：Windows GPU 上跑 Qwen3-0.6B 第一轮 LoRA；记录硬件、版本、损失、对照测试。
 - [ ] B-03：收集 >100 条高质量自有/获授权、可审核的训练数据；清洗、去重、按主题拆分训练与评测。
