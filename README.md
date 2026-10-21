@@ -2,7 +2,46 @@
 
 **双轨同步启动**：合法来源发现 → 可交付数字产品；同时开始本地小模型训练 → 保存评测 → 数据迭代 → 训练适配器。多个 Agent 根据同一仓库 `AGENTS.md` 协作。
 
-> **截至 2026-10-21**：项目骨架 + 离线产品候选审核演示 + CPU 小模型真实参数训练 (smoke) + Windows 本地 Qwen3-0.6B LoRA 运行入口。**这不是** 已能持续无人值守产生收入的产品，也不是一个已经具备高质量生成能力的自训练模型。GPU LoRA 仍需在有 CUDA 的 Windows 主机上执行。
+> **截至 2026-10-21（双轨首次交付）**：项目骨架 + 离线产品候选审核演示 + CPU 小模型真实参数训练 (smoke) + **真实 GPU Qwen3-0.6B LoRA 训练完成（GTX 1660 Ti, train_loss 5.438 / eval_loss 5.197, adapter 未上传）** + 产品工厂首个真实闭环（真实采集 3 仓库 → 门控 → 评分 → 2 个原创资料包 READY_FOR_REVIEW）。**这不是** 已能持续无人值守产生收入的产品，也不是一个已经具备高质量生成能力的自训练模型。模型晋升需独立评估（AGENTS.md 规则 7）。
+
+## 分支结构
+
+- `main` 稳定版（双轨合并后：c4f00d8）
+- `feat/product-factory-v1` 产品工厂轨道（collector 缓存/评分/构建器，已合并）
+- `feat/local-model-training-v1` 本地模型轨道（GPU LoRA 训练记录 + eval 脚本，已合并）
+- 所有改动通过分支 + PR / 人工审核进入 main，Agent 不并发修改同一文件
+
+## 一次完整生产闭环（已验证，元数据 only）
+
+```bash
+# 1. 采集（ETag 缓存 + 有界重试，最多 10 仓库/次）
+python scripts/collect_github.py --repo huggingface/peft --cache data/cache/github_etag.json --output data/inbox/github_candidates.jsonl
+# 2. 门控入库（BLOCKED/REVIEW 分级）
+python scripts/run_demo.py --input data/inbox/github_candidates.jsonl
+# 3. 构建原创资料包（REVIEW 候选 → BUILDING→TESTING→READY_FOR_REVIEW）
+python scripts/build_product.py --input data/inbox/github_candidates.jsonl --output-root outputs/product_packs
+# 4. 全量测试
+python -m unittest discover -s tests -v
+```
+
+## 本地 GPU LoRA 迭代（已验证可复现）
+
+```bash
+# 训练（需 CUDA GPU；HF 缓存在 E:\AI_Lab\hf-cache，本机需 HF_HUB_DISABLE_SYMLINKS=1）
+python scripts/train_lora.py --dataset data/seed/sft_examples.jsonl --output models/qwen3-0.6b-lora-v0 --epochs 1 --max-length 384
+# 推理验证
+python scripts/infer_lora.py --adapter models/qwen3-0.6b-lora-v0 --question "你的问题"
+# 基座 vs LoRA 对比（独立评估初步证据）
+python scripts/eval_lora.py --adapter models/qwen3-0.6b-lora-v0
+```
+
+## 成长闭环机制
+
+发现资料 → 授权审核（policy.py 门控）→ 知识积累（experience.py 账本）→ 产品生成（builder.py）→ 测试（unittest）→ 修复（≤3 次，超限 BLOCKED）→ 经验总结 → 构建训练样本（dataset.py 准入门）→ 本地微调（train_lora.py）→ 独立评估（eval_lora.py）→ 人工晋升。
+
+- **资源预算**（.env.example）：`GF_MAX_CANDIDATES_PER_RUN=3`、`GF_MAX_RETRIES=3`、`GF_DAILY_USD_BUDGET=0`、`GF_ENABLE_AUTO_PUBLISH=false`；采集每次最多 10 仓库，训练自动修复最多 3 次。
+- **数据版本**：训练数据经 dataset.py 门控（rights/approved/split 强制），模型只有通过独立评估才可替换旧版本。
+- **暂停/恢复**：授权不明、连续失败、超预算 → 状态置 BLOCKED 待人工审核，SQLite 事件日志可审计。
 
 ## 快速开始：无需联网
 
@@ -38,25 +77,14 @@ python -m unittest discover -s tests -v
 - 运行预算：默认 0 外部花费、0 自动发布、0 不受限的循环。
 - GitHub 无明确许可证的代码、图片和教程不直接用于数字产品或训练。
 
-## 创建远端仓库
+## 远端仓库与协作
 
-GitHub 连接无创建仓库权限。先在浏览器 `https://github.com/new` 创建 **private** 仓库 `agent-growth-foundry`。在项目目录使用：
-
-```bash
-git init
-git add .
-git commit -m "chore: bootstrap dual-track agent foundry and local model training"
-git branch -M main
-git remote add origin https://github.com/<YOUR_USERNAME>/agent-growth-foundry.git
-git push -u origin main
-```
-
-仓库建好以后，WorkBuddy/Codex 均以 `AGENTS.md`、`docs/INTERFACES.md` 作为工作标准。
+远端仓库：`https://github.com/cvcingcvc-code/agent-growth-foundry`（Public，2026-10-21 首次推送）。所有 Agent 以 `AGENTS.md`、`docs/INTERFACES.md` 作为工作标准；改动通过独立分支 + PR / 人工审核进入 main。
 
 ## 增量采集（真正的 API 接入，需用户本机联网）
 
 ```bash
-python scripts/collect_github.py --repo QwenLM/Qwen3 --repo huggingface/peft
+python scripts/collect_github.py --repo QwenLM/Qwen3 --repo huggingface/peft --cache data/cache/github_etag.json
 python scripts/run_demo.py --input data/inbox/github_candidates.jsonl
 ```
 
