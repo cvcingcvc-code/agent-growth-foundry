@@ -18,6 +18,8 @@ def main():
     p.add_argument('--model', default='Qwen/Qwen3-0.6B')
     p.add_argument('--output', default='models/qwen3-0.6b-lora-v0')
     p.add_argument('--epochs', type=float, default=1)
+    p.add_argument('--learning-rate', type=float, default=2e-4,
+                   help='optimizer learning rate; never claim a fixed optimal config without comparison')
     p.add_argument('--max-length', type=int, default=384)
     p.add_argument('--dry-run', action='store_true')
     a = p.parse_args()
@@ -78,7 +80,7 @@ def main():
     train_dataset = RecordSet(splits['train'])
     eval_dataset = RecordSet(splits['eval'])
     args = TrainingArguments(
-        output_dir=str(out), num_train_epochs=a.epochs, learning_rate=2e-4,
+        output_dir=str(out), num_train_epochs=a.epochs, learning_rate=a.learning_rate,
         per_device_train_batch_size=1, per_device_eval_batch_size=1,
         gradient_accumulation_steps=4, gradient_checkpointing=True,
         gradient_checkpointing_kwargs={'use_reentrant':False},
@@ -96,9 +98,10 @@ def main():
     report = {
         'status':'TRAINING_FINISHED_NEEDS_INDEPENDENT_EVALUATION', 'base_model':a.model,
         'gpu':device_name,'dtype':str(dtype),'train_size':len(train_dataset),
-        'eval_size':len(eval_dataset),'epochs':a.epochs,'train_loss':result.training_loss,
+        'eval_size':len(eval_dataset),'epochs':a.epochs,'learning_rate':a.learning_rate,
+        'train_loss':result.training_loss,
         'eval_loss':metrics.get('eval_loss'),
-        'limitation':'Small seed examples cannot demonstrate improved useful generation. Compare against base model on new human-labeled holdout before promotion.'
+        'limitation':'Small seed examples cannot demonstrate improved useful generation. Compare against current champion on fixed eval set before promotion.'
     }
     (out/'training_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False,indent=2))
