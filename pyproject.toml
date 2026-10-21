@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-growth-foundry"
+version = "0.1.0"
+description = "Agentic digital-product pipeline and simultaneous local-model training track"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+smoke = ["torch>=2.2"]
+train = ["torch>=2.2", "transformers>=4.51,<6", "peft>=0.17,<1", "accelerate>=1,<2", "safetensors>=0.5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,25 @@
+{
+  "model_type": "TINY_HASHED_BIGRAM_CLASSIFIER_NOT_LLM",
+  "status": "SMOKE_PASS",
+  "source": "self-authored, synthetic examples",
+  "train_count": 39,
+  "eval_count": 9,
+  "epochs": 8,
+  "baseline": {
+    "total": 9,
+    "correct": 2,
+    "accuracy": 0.2222,
+    "loss": 1.15942
+  },
+  "after": {
+    "total": 9,
+    "correct": 3,
+    "accuracy": 0.3333,
+    "loss": 1.10219
+  },
+  "checkpoint_reload_pass": true,
+  "weights_changed": true,
+  "checkpoint_sha256": "b35ee4f98c20ecbb4c3bf7e46c60cf6c8dd85c163b0d4b4b03a70b51a6a62384",
+  "elapsed_sec": 0.036,
+  "caveat": "Tiny synthetic eval; no evidence of commercial quality or generalization."
+}
