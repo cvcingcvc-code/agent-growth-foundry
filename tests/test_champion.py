@@ -79,9 +79,72 @@ class ComparisonGateTests(unittest.TestCase):
         c = Champion('models/v0', 'Qwen/Qwen3-0.6B', 't', 'human', 5.0, [])
         with tempfile.TemporaryDirectory() as td:
             ev = Path(td) / 'eval.json'
+            ev.write_text(json.dumps({'status': 'BASE_VS_LORA_COMPARISON_ONLY_NOT_SIGNIFICANCE_CLAIM',
+                                      'samples': 2,
+                                      'items': [{'source_id': 's1'}, {'source_id': 's2'}]}),
+                          encoding='utf-8')
+            ok, reason = champion_comparison_ready(c, ev)
+            self.assertTrue(ok, reason)
+
+    def test_empty_json_evidence_holds(self):
+        # Round-4.1 anti-bypass: an empty '{}' evidence file must NOT pass.
+        c = Champion('models/v0', 'Qwen/Qwen3-0.6B', 't', 'human', 5.0, [])
+        with tempfile.TemporaryDirectory() as td:
+            ev = Path(td) / 'eval.json'
             ev.write_text('{}', encoding='utf-8')
             ok, reason = champion_comparison_ready(c, ev)
-            self.assertTrue(ok)
+            self.assertFalse(ok)
+            self.assertIn('HOLD', reason)
+
+    def test_no_items_evidence_holds(self):
+        c = Champion('models/v0', 'Qwen/Qwen3-0.6B', 't', 'human', 5.0, [])
+        with tempfile.TemporaryDirectory() as td:
+            ev = Path(td) / 'eval.json'
+            ev.write_text(json.dumps({'status': 'something', 'samples': 4}), encoding='utf-8')
+            ok, reason = champion_comparison_ready(c, ev)
+            self.assertFalse(ok)
+            self.assertIn('no per-sample items', reason)
+
+    def test_too_few_samples_holds(self):
+        c = Champion('models/v0', 'Qwen/Qwen3-0.6B', 't', 'human', 5.0, [])
+        with tempfile.TemporaryDirectory() as td:
+            ev = Path(td) / 'eval.json'
+            ev.write_text(json.dumps({'items': [{'source_id': 's1'}]}), encoding='utf-8')
+            ok, reason = champion_comparison_ready(c, ev, expected_samples=4)
+            self.assertFalse(ok)
+            self.assertIn('need >= 4', reason)
+
+    def test_dataset_fingerprint_mismatch_holds(self):
+        # Round-4.1 anti-bypass: evidence recorded for a DIFFERENT dataset
+        # must not let a candidate bypass the regression gate.
+        c = Champion('models/v0', 'Qwen/Qwen3-0.6B', 't', 'human', 5.0, [])
+        with tempfile.TemporaryDirectory() as td:
+            ev = Path(td) / 'eval.json'
+            ev.write_text(json.dumps({'items': [{'source_id': 's1'}, {'source_id': 's2'}],
+                                      'dataset_fingerprint': {'sha256': 'a' * 64, 'count': 2}}),
+                          encoding='utf-8')
+            ok, reason = champion_comparison_ready(c, ev, expected_dataset_sha256='b' * 64)
+            self.assertFalse(ok)
+            self.assertIn('fingerprint mismatch', reason)
+
+    def test_dataset_fingerprint_match_passes(self):
+        c = Champion('models/v0', 'Qwen/Qwen3-0.6B', 't', 'human', 5.0, [])
+        with tempfile.TemporaryDirectory() as td:
+            ev = Path(td) / 'eval.json'
+            ev.write_text(json.dumps({'items': [{'source_id': 's1'}, {'source_id': 's2'}],
+                                      'dataset_fingerprint': {'sha256': 'b' * 64, 'count': 2}}),
+                          encoding='utf-8')
+            ok, reason = champion_comparison_ready(c, ev, expected_dataset_sha256='b' * 64)
+            self.assertTrue(ok, reason)
+
+    def test_unreadable_evidence_holds(self):
+        c = Champion('models/v0', 'Qwen/Qwen3-0.6B', 't', 'human', 5.0, [])
+        with tempfile.TemporaryDirectory() as td:
+            ev = Path(td) / 'eval.json'
+            ev.write_text('not json at all', encoding='utf-8')
+            ok, reason = champion_comparison_ready(c, ev)
+            self.assertFalse(ok)
+            self.assertIn('unreadable', reason)
 
 
 class SuggestionTests(unittest.TestCase):

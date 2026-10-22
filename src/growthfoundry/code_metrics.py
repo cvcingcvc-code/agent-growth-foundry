@@ -4,15 +4,31 @@ rate, repetition-loop rate and task relevance.
 Pure functions over recorded task results, so the whole metric layer is
 testable without any GPU or model. These metrics are quality signals for the
 growth loop, not a final release approval.
+
+Repetition detection (round-4.1 unified rule): the 2-gram word-frequency
+check was removed because it false-positives on code and topical words
+(e.g. "评测集" appearing several times in an answer about 评测集). The real
+failure modes (sft-020) are caught by exactly two signals, implemented HERE
+and re-used everywhere (candidate_audit, regression, coding pipeline):
+- sentence-level loop: the same non-trivial sentence appears >=2 times
+  (split on 。！？!?；; and newlines);
+- consecutive duplicate code lines: >=3 identical non-empty lines in a row.
+Variable-name reuse and topical-word reuse are NOT flagged.
 """
 from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass, field
 
+# Kept for backward compatibility of imports only; the word-frequency
+# threshold semantics are deprecated by the unified repetition rule.
 REPEAT_THRESHOLD = 3
 MIN_LEN_CHARS = 12
 OVERLAP_FLOOR = 0.15
+CONSECUTIVE_DUP_LINES = 3
+SENTENCE_LOOP_THRESHOLD = 2
+
+_SENTENCE_SPLIT_RE = re.compile(r'[。！？!?；;\n]')
 
 _STOPWORDS = {"的", "了", "是", "在", "和", "与", "或", "一个", "如果", "可以", "需要",
               "the", "a", "an", "of", "to", "is", "are", "and", "or", "if", "for", "in"}
@@ -60,9 +76,11 @@ def syntax_pass_rate(answers: list[str]) -> dict:
             'errors': errors}
 
 
-# ---------- repetition (same failure mode as sft-020) ----------
+# ---------- repetition (round-4.1 unified rule; authoritative) ----------
 
 def _words(text: str) -> list[str]:
+    """CJK bigrams + latin words, stopword-filtered. Used by the relevance
+    overlap metrics only - NOT by repetition detection any more."""
     text = str(text or "").strip()
     if not text:
         return []
@@ -77,17 +95,60 @@ def _words(text: str) -> list[str]:
     return [g for g in grams if g not in _STOPWORDS]
 
 
-def has_repetition_loop(answer: str, threshold: int = REPEAT_THRESHOLD) -> bool:
-    text = str(answer or "").strip()
+def has_sentence_loop(text: str, threshold: int = SENTENCE_LOOP_THRESHOLD,
+                      min_len_chars: int = 5) -> bool:
+    """True when the same non-trivial sentence appears >=threshold times.
+
+    Prose form of the sft-020 failure mode: pathological whole-sentence
+    loops (min length 5 catches short phrase loops like sft-020's
+    "需手动重置" x3). Topical-word reuse is NOT flagged (see module docstring).
+    """
+    text = str(text or '').strip()
+    if len(text) < min_len_chars:
+        return False
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text)
+                 if len(s.strip()) >= min_len_chars]
+    counts: dict[str, int] = {}
+    for s in sentences:
+        counts[s] = counts.get(s, 0) + 1
+    return max(counts.values(), default=0) >= threshold
+
+
+def has_consecutive_dup_lines(code: str, threshold: int = CONSECUTIVE_DUP_LINES) -> bool:
+    """Code form of the sft-020 failure mode: >=threshold identical
+    non-empty lines appear back-to-back."""
+    run, prev = 1, None
+    for line in str(code or '').splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped == prev:
+            run += 1
+            if run >= threshold:
+                return True
+        else:
+            run, prev = 1, stripped
+    return False
+
+
+def has_repetition_loop(answer: str, threshold: int = SENTENCE_LOOP_THRESHOLD) -> bool:
+    """Unified repetition signal (round-4.1).
+
+    Dispatches on answer shape: sentence-level loop for the prose part,
+    consecutive-duplicate-lines for the code part. Replaces the removed
+    2-gram word-frequency check that false-positived on code and topics.
+    """
+    text = str(answer or '').strip()
     if len(text) < MIN_LEN_CHARS:
         return False
-    words = _words(text)
-    if not words:
-        return False
-    counts: dict[str, int] = {}
-    for w in words:
-        counts[w] = counts.get(w, 0) + 1
-    return max(counts.values()) >= threshold
+    blocks = extract_code_blocks(text)
+    if blocks:
+        # Code answer: only the code-form signal applies. Split off the
+        # fenced blocks and check the remaining prose separately.
+        prose = re.sub(r"```(?:python|py)?\s*\n.*?```", '', text, flags=re.DOTALL)
+        return (has_consecutive_dup_lines('\n'.join(blocks))
+                or has_sentence_loop(prose.strip()))
+    return has_sentence_loop(text)
 
 
 def repetition_loop_rate(answers: list[str]) -> dict:

@@ -12,8 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from growthfoundry.dataset import read_approved
 
 
-def build_comparison_report(records, base_answers, adapter_answers, adapter_dir, device_note):
+def build_comparison_report(records, base_answers, adapter_answers, adapter_dir, device_note,
+                            dataset_sha256: str | None = None):
     """Assemble the base-vs-LoRA comparison structure (pure, testable)."""
+    import hashlib
     assert len(records) == len(base_answers) == len(adapter_answers), 'length mismatch'
     items = []
     for rec, base_out, lora_out in zip(records, base_answers, adapter_answers):
@@ -24,7 +26,7 @@ def build_comparison_report(records, base_answers, adapter_answers, adapter_dir,
             'base_answer': base_out,
             'lora_answer': lora_out,
         })
-    return {
+    report = {
         'status': 'BASE_VS_LORA_COMPARISON_ONLY_NOT_SIGNIFICANCE_CLAIM',
         'adapter': str(adapter_dir),
         'device_note': device_note,
@@ -32,6 +34,14 @@ def build_comparison_report(records, base_answers, adapter_answers, adapter_dir,
         'items': items,
         'limitation': 'Only 4 eval seed samples; no statistically significant improvement can be claimed. Human-labeled holdout required before promotion.',
     }
+    if dataset_sha256:
+        report['dataset_fingerprint'] = {'sha256': dataset_sha256, 'count': len(records)}
+    return report
+
+
+def dataset_sha256_of(path) -> str:
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def main():
@@ -80,7 +90,8 @@ def main():
         adapter_answers = ['SKIPPED: CUDA unavailable, adapter inference is GPU-only in V1'] * len(questions)
         device_note += '; LoRA answers skipped'
 
-    report = build_comparison_report(eval_records, base_answers, adapter_answers, a.adapter, device_note)
+    report = build_comparison_report(eval_records, base_answers, adapter_answers,
+                                     a.adapter, device_note, dataset_sha256_of(a.dataset))
     out = Path(a.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

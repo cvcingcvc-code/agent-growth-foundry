@@ -28,12 +28,15 @@ import re
 from pathlib import Path
 
 from growthfoundry.code_metrics import (
-    extract_code_blocks, has_repetition_loop, is_valid_python,
+    extract_code_blocks, has_consecutive_dup_lines, has_sentence_loop,
+    has_repetition_loop, is_valid_python,
 )
 
 TASK_TYPES = {"code_gen", "debug", "qa", "counterexample_019", "counterexample_020"}
+# Repetition detection delegates to code_metrics (round-4.1 unified rule):
+# has_sentence_loop (prose) + has_consecutive_dup_lines (code) live there and
+# are shared with the regression gate and the coding pipeline.
 CONSECUTIVE_DUP_LINES = 3
-MIN_SENT_LEN_CHARS = 8
 MAX_019_LEN = 80
 MIN_020_LEN = 10
 MAX_020_LEN = 80
@@ -51,41 +54,12 @@ def split_prose_and_code(answer: str) -> tuple[str, list[str]]:
 
 # ---------- code-level checks ----------
 
-def has_consecutive_dup_lines(code: str, threshold: int = CONSECUTIVE_DUP_LINES) -> bool:
-    """True when >=threshold identical non-empty lines appear back-to-back."""
-    run, prev = 1, None
-    for line in str(code or '').splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped == prev:
-            run += 1
-            if run >= threshold:
-                return True
-        else:
-            run, prev = 1, stripped
-    return False
-
-
 def defines_function(code: str, func_name: str) -> bool:
     return bool(re.search(rf"def\s+{re.escape(func_name)}\s*\(", str(code or '')))
 
 
-def has_sentence_loop(text: str, threshold: int = 2) -> bool:
-    """True when the same non-trivial sentence appears >=threshold times.
-
-    This is the prose equivalent of the sft-020 failure mode: pathological
-    whole-sentence loops. Normal topical-word reuse (e.g. "评测集" appearing
-    several times while answering a question about 评测集) is NOT flagged.
-    """
-    text = str(text or '').strip()
-    if len(text) < MIN_SENT_LEN_CHARS:
-        return False
-    sentences = [s.strip() for s in re.split(r'[。！？\n]', text) if len(s.strip()) >= MIN_SENT_LEN_CHARS]
-    counts: dict[str, int] = {}
-    for s in sentences:
-        counts[s] = counts.get(s, 0) + 1
-    return max(counts.values(), default=0) >= threshold
+# has_sentence_loop / has_consecutive_dup_lines are imported from
+# code_metrics.py (round-4.1 unified repetition rule, single source of truth).
 
 
 # ---------- per-type rule checks ----------

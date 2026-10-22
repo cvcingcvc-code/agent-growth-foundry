@@ -1,23 +1,22 @@
-"""Coding-task sandbox pipeline: generate -> isolated execution -> test ->
-failure analysis -> one patch attempt -> audit -> candidate pool.
+"""Coding-task sandbox pipeline: generate -> policy gate -> restricted
+execution -> test -> failure analysis -> one patch attempt -> audit -> pool.
 
-Safety rules (AGENTS.md):
-- Generated code runs in a SUBPROCESS with a hard timeout; on timeout the
-  process is killed. Code never runs inside this process.
-- Each run gets a fresh temp directory; the subprocess cwd is that temp dir.
-- No network, no installs: the harness never executes pip/npm and generated
-  code that tries to open network sockets still runs, but the harness itself
-  performs no network calls.
-- One patch attempt per task maximum (AGENTS.md rule 6: max 3 auto-fixes,
-  this pipeline uses 1 by default).
-
-Test oracle: the task's test_hint string like "f('x')==1; f('y')==2"
-is translated into assert statements executed after importing the code.
+Execution policy (Round 4.1 Task 1, AGENTS.md):
+- Default exec-policy=blocked: model-generated code is NOT executed until a
+  human marks it reviewed. run_restricted returns BLOCKED.
+- exec-policy=reviewed: code runs through the restricted runner
+  (growthfoundry.sandbox_runner) - python-level network guard, Windows Job
+  Object (memory limit + job user-time limit + kill-on-close process tree),
+  wall-clock timeout. The filesystem is NOT isolated and the runner never
+  claims SANDBOX_SECURE_PASS.
+- exec-policy=harness: the legacy bare subprocess path (temporary dir +
+  timeout only). Kept for pipeline self-tests with KNOWN content, never for
+  unreviewed model output.
 
 Usage:
   python scripts/coding_pipeline.py --adapter models/qwen3-0.6b-lora-v0 \
       --tasks data/eval/coding_eval_v1.jsonl --limit 5 \
-      --out outputs/coding_pipeline_v0.json
+      --exec-policy blocked --out outputs/coding_pipeline_v0.json
 """
 from __future__ import annotations
 import argparse
@@ -39,6 +38,9 @@ from growthfoundry.code_metrics import (  # noqa: E402
 from growthfoundry.candidate_audit import (  # noqa: E402
     has_consecutive_dup_lines, has_sentence_loop,
 )
+from growthfoundry.sandbox_runner import run_restricted, security_report  # noqa: E402
+
+EXEC_POLICIES = ('blocked', 'reviewed', 'harness')
 
 RUNNER_TEMPLATE = '''# sandbox test runner
 import sys
@@ -88,7 +90,11 @@ def build_runner(code: str, hint: str) -> str:
 
 
 def run_in_sandbox(runner_src: str, timeout_sec: int) -> dict:
-    """Execute the runner in a subprocess (fresh temp dir, hard timeout)."""
+    """HARNESS-ONLY execution path (temporary dir + timeout, no restrictions).
+
+    Kept for pipeline self-tests with KNOWN content. Unreviewed model output
+    must go through run_restricted (exec-policy=blocked/reviewed) instead.
+    """
     with tempfile.TemporaryDirectory(prefix='agf_sandbox_') as td:
         script = Path(td) / 'runner.py'
         script.write_text(runner_src, encoding='utf-8')
@@ -104,8 +110,29 @@ def run_in_sandbox(runner_src: str, timeout_sec: int) -> dict:
                     'timed_out': True}
 
 
+def execute_under_policy(code: str, hint: str, policy: str,
+                         timeout_exec: int) -> dict:
+    """Route execution through the selected policy. Never runs unreviewed
+    model output without an explicit reviewed/harness choice."""
+    if policy == 'blocked':
+        return {'status': 'BLOCKED', 'executed': False,
+                'reason': 'exec-policy=blocked: code not executed',
+                'security': security_report()}
+    if policy == 'reviewed':
+        return run_restricted(code, hint, timeout_sec=timeout_exec, reviewed=True)
+    # harness: bare subprocess with timeout only (self-test path)
+    res = run_in_sandbox(build_runner(code, hint), timeout_exec)
+    res['status'] = ('PASSED' if res['returncode'] == 0 and 'ALL_HINTS_PASS' in res.get('stdout', '')
+                     else 'TIMEOUT' if res.get('timed_out') else 'FAILED')
+    res['executed'] = True
+    res['security'] = security_report()
+    return res
+
+
 def analyze_failure(exec_result: dict) -> str:
     """Classify a failure into a repair hint category."""
+    if exec_result.get('status') == 'BLOCKED':
+        return 'blocked'
     if exec_result.get('timed_out'):
         return 'timeout'
     stderr = exec_result.get('stderr', '')
@@ -150,8 +177,13 @@ def task_relevant(question: str, answer: str) -> bool:
 
 
 def process_task(model, tokenizer, rec: dict, max_new_tokens: int,
-                 timeout_gen: int, timeout_exec: int, patch_attempt: bool = True) -> dict:
-    """One task through the full pipeline; returns a record of every stage."""
+                 timeout_gen: int, timeout_exec: int, patch_attempt: bool = True,
+                 exec_policy: str = 'blocked') -> dict:
+    """One task through the full pipeline; returns a record of every stage.
+
+    exec_policy: 'blocked' (default, code not executed), 'reviewed'
+    (restricted runner), 'harness' (bare subprocess, self-tests only).
+    """
     question = rec['question']
     hint = hint_for_task(rec)
     t0 = time.time()
@@ -174,12 +206,12 @@ def process_task(model, tokenizer, rec: dict, max_new_tokens: int,
 
     exec_result, failure, failure_details, patched = None, 'none', '', False
     if stages['syntax_ok'] and hint:
-        runner = build_runner(code, hint)
-        exec_result = run_in_sandbox(runner, timeout_exec)
+        exec_result = execute_under_policy(code, hint, exec_policy, timeout_exec)
         failure = analyze_failure(exec_result)
-        failure_details = (exec_result.get('stdout', '') + exec_result.get('stderr', ''))[-600:]
+        failure_details = (exec_result.get('stdout', '') + exec_result.get('stderr', '')
+                           or exec_result.get('reason', ''))[-600:]
 
-        if failure != 'none' and patch_attempt:
+        if failure not in ('none', 'blocked') and patch_attempt:
             patch_res = generate_once(
                 model, tokenizer,
                 PATCH_PROMPT.format(question=question, prev_code=code,
@@ -193,13 +225,20 @@ def process_task(model, tokenizer, rec: dict, max_new_tokens: int,
                 patched = True
                 code = patch_code
                 answer = patch_answer
-                exec_result = run_in_sandbox(build_runner(code, hint), timeout_exec)
+                exec_result = execute_under_policy(code, hint, exec_policy, timeout_exec)
                 failure = analyze_failure(exec_result)
-                failure_details = (exec_result.get('stdout', '') + exec_result.get('stderr', ''))[-600:]
+                failure_details = (exec_result.get('stdout', '') + exec_result.get('stderr', '')
+                                   or exec_result.get('reason', ''))[-600:]
 
-    passed = bool(exec_result and exec_result.get('returncode') == 0
-                  and 'ALL_HINTS_PASS' in exec_result.get('stdout', ''))
+    # PASSED requires a real execution that printed ALL_HINTS_PASS. A BLOCKED
+    # result is recorded as not-executed, never as a pass.
+    passed = bool(exec_result and exec_result.get('executed')
+                  and exec_result.get('status') == 'PASSED')
+    if exec_result and not exec_result.get('executed'):
+        failure = 'blocked'
     stages['hint_test_passed'] = passed
+    stages['exec_status'] = exec_result.get('status') if exec_result else 'not_run'
+    stages['exec_policy'] = exec_policy
 
     return {
         'source_id': rec['source_id'],
@@ -213,6 +252,8 @@ def process_task(model, tokenizer, rec: dict, max_new_tokens: int,
         'failure_details': failure_details,
         'stages': stages,
         'passed': passed,
+        'executed': bool(exec_result and exec_result.get('executed')),
+        'security': exec_result.get('security') if exec_result else security_report(),
         'elapsed_sec': round(time.time() - t0, 1),
     }
 
@@ -220,11 +261,14 @@ def process_task(model, tokenizer, rec: dict, max_new_tokens: int,
 def summarize_pipeline(results: list[dict]) -> dict:
     n = len(results)
     passed = sum(1 for r in results if r['passed'])
+    executed = sum(1 for r in results if r.get('executed'))
     patched_runs = [r for r in results if r.get('patched')]
     return {
         'total': n,
         'passed': passed,
         'pass_rate': round(passed / n, 4) if n else 0.0,
+        'executed': executed,
+        'blocked': n - executed,
         'patch_attempted': len(patched_runs),
         'patch_success_rate': round(len([r for r in patched_runs if r['passed']])
                                     / len(patched_runs), 4) if patched_runs else 0.0,
@@ -246,6 +290,9 @@ def main() -> None:
     parser.add_argument('--max-new-tokens', type=int, default=300)
     parser.add_argument('--timeout-gen', type=int, default=120)
     parser.add_argument('--timeout-exec', type=int, default=10)
+    parser.add_argument('--exec-policy', default='blocked', choices=EXEC_POLICIES,
+                        help='blocked (default): never execute; reviewed: restricted '
+                             'runner; harness: bare subprocess (self-tests only)')
     parser.add_argument('--no-patch', action='store_true', help='disable the one patch attempt')
     parser.add_argument('--out', required=True)
     args = parser.parse_args()
@@ -260,10 +307,12 @@ def main() -> None:
     results = []
     for rec in tasks:
         r = process_task(model, tokenizer, rec, args.max_new_tokens,
-                         args.timeout_gen, args.timeout_exec, patch_attempt=not args.no_patch)
+                         args.timeout_gen, args.timeout_exec,
+                         patch_attempt=not args.no_patch, exec_policy=args.exec_policy)
         results.append(r)
         print(json.dumps({'source_id': r['source_id'], 'passed': r['passed'],
-                          'patched': r['patched'], 'failure': r['failure']},
+                          'executed': r['executed'], 'patched': r['patched'],
+                          'failure': r['failure']},
                          ensure_ascii=False), flush=True)
 
     report = {
@@ -271,7 +320,9 @@ def main() -> None:
         'adapter': label,
         'sampling': {'mode': 'greedy', 'max_new_tokens': args.max_new_tokens,
                      'timeout_gen': args.timeout_gen, 'timeout_exec': args.timeout_exec,
-                     'patch_attempt_enabled': not args.no_patch},
+                     'patch_attempt_enabled': not args.no_patch,
+                     'exec_policy': args.exec_policy},
+        'security': security_report(),
         'results': results,
         'summary': summarize_pipeline(results),
     }

@@ -2,7 +2,14 @@
 
 Safety and usability:
 - enable_thinking=False on the chat template (Qwen3 non-thinking mode)
-- max-new-tokens limit and a per-turn timeout guard
+- max-new-tokens limit and a per-turn timeout guard that REALLY stops the
+  generation (round-4.1 fix): a TimeoutStoppingCriteria is registered with
+  model.generate(), so the generation loop checks the deadline between
+  steps and returns early - the old daemon-thread guard left the model
+  generating in the background after the timeout fired.
+- LoRA adapters are only loaded when adapter_config.json records the SAME
+  base model (round-4.1 fix): a 0.6B adapter must never be mounted onto an
+  incompatible base; cross-base mounting exits with a clear error.
 - clear errors when CUDA/adapter/packages are missing
 - --version-info shows model/adapter versions without loading weights
 - --adapter none uses the raw base model; same sampling config (greedy) for
@@ -49,6 +56,27 @@ def adapter_version_info(adapter: str | None, base: str) -> dict:
     return info
 
 
+def adapter_base_matches(adapter: str, target_base: str) -> tuple[bool, str, str]:
+    """Read adapter_config.json and compare its recorded base against the
+    model actually being loaded (round-4.1 Task 3).
+
+    Returns (compatible, adapter_base, reason). Unknown provenance is
+    incompatible by default (conservative).
+    """
+    cfg = Path(adapter) / 'adapter_config.json'
+    data = json.loads(cfg.read_text(encoding='utf-8'))
+    adapter_base = (data.get('base_model') or data.get('base_model_name_or_path')
+                    or data.get('_name_or_path') or '')
+    if not adapter_base:
+        return False, '', 'adapter config records no base model; refusing to mount'
+    norm = lambda s: str(s).replace('\\', '/').rstrip('/')
+    if norm(adapter_base) != norm(target_base):
+        return (False, adapter_base,
+                f'adapter was trained on {adapter_base!r}, refusing to mount onto {target_base!r}; '
+                f'switching base = new model series (retrain + re-accept)')
+    return True, adapter_base, 'base match'
+
+
 def load_model_and_tokenizer(model_id: str, adapter: str | None):
     try:
         import torch
@@ -57,6 +85,12 @@ def load_model_and_tokenizer(model_id: str, adapter: str | None):
         raise SystemExit(f'缺少依赖包: {ex}；请安装 pip install -e ".[train]"')
     if not torch.cuda.is_available():
         raise SystemExit('BLOCKED: 未检测到 CUDA GPU；本地推理配置为 GPU-only（V1）。')
+    if adapter and adapter != 'none':
+        if not (Path(adapter) / 'adapter_config.json').exists():
+            raise SystemExit(f'adapter 不存在或不完整: {adapter}')
+        ok, _ab, reason = adapter_base_matches(adapter, model_id)
+        if not ok:
+            raise SystemExit(f'BLOCKED: LoRA 基座不兼容 — {reason}')
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=False)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     base = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype,
@@ -64,30 +98,47 @@ def load_model_and_tokenizer(model_id: str, adapter: str | None):
     model = base
     if adapter and adapter != 'none':
         from peft import PeftModel
-        if not (Path(adapter) / 'adapter_config.json').exists():
-            raise SystemExit(f'adapter 不存在或不完整: {adapter}')
         model = PeftModel.from_pretrained(base, adapter)
     model.eval()
     return model, tokenizer
 
 
 def generate_once(model, tokenizer, question: str, max_new_tokens: int, timeout_sec: int) -> dict:
-    """Single greedy generation with timeout guard; returns text + metadata."""
+    """Single greedy generation with a REAL timeout guard (round-4.1 fix).
+
+    The deadline is enforced inside the generation loop via a
+    StoppingCriteria, so a timed-out turn actually stops generating instead
+    of leaving the model running in a daemon thread.
+    """
     import threading
     import torch
 
-    result: dict = {'text': '', 'error': None, 'elapsed_sec': 0.0, 'new_tokens': 0}
+    result: dict = {'text': '', 'error': None, 'elapsed_sec': 0.0, 'new_tokens': 0,
+                    'timed_out': False}
 
-    def run():
+    class DeadlineStoppingCriteria:
+        """Cooperative stop: generate() polls this between decode steps."""
+        def __init__(self, deadline: float):
+            self.deadline = deadline
+
+        def __call__(self, input_ids, scores, **kwargs) -> 'torch.BoolTensor':
+            import torch as _t
+            return _t.tensor([time.monotonic() >= self.deadline], dtype=_t.bool,
+                             device=input_ids.device)
+
+    def run(stop_criteria):
         t0 = time.monotonic()
         try:
             text = tokenizer.apply_chat_template(
                 [{'role': 'user', 'content': question}], tokenize=False,
                 add_generation_prompt=True, enable_thinking=False)
             inputs = tokenizer(text, return_tensors='pt', add_special_tokens=False).to('cuda')
+            gen_kwargs = dict(**inputs, max_new_tokens=max_new_tokens, do_sample=False,
+                              pad_token_id=tokenizer.eos_token_id)
+            if stop_criteria is not None:
+                gen_kwargs['stopping_criteria'] = stop_criteria
             with torch.inference_mode():
-                out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False,
-                                     pad_token_id=tokenizer.eos_token_id)
+                out = model.generate(**gen_kwargs)
             new_tokens = out.shape[1] - inputs['input_ids'].shape[1]
             result['text'] = tokenizer.decode(out[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
             result['new_tokens'] = int(new_tokens)
@@ -95,11 +146,31 @@ def generate_once(model, tokenizer, question: str, max_new_tokens: int, timeout_
         except Exception as ex:  # surface generation errors instead of crashing the REPL
             result['error'] = f'{type(ex).__name__}: {ex}'
 
-    thread = threading.Thread(target=run, daemon=True)
+    deadline = time.monotonic() + timeout_sec
+    stop_criteria = None
+    try:
+        from transformers import StoppingCriteriaList
+        # transformers>=4.40 polls kwargs-based criteria each decode step, so
+        # the deadline check inside the generation loop actually stops it.
+        stop_criteria = StoppingCriteriaList([DeadlineStoppingCriteria(deadline)])
+    except ImportError:
+        stop_criteria = None  # very old transformers: watcher thread reports honestly below
+
+    thread = threading.Thread(target=run, args=(stop_criteria,), daemon=True)
     thread.start()
-    thread.join(timeout=timeout_sec)
+    thread.join(timeout=timeout_sec + 15)  # grace for the criteria to fire + finalize
     if thread.is_alive():
-        result['error'] = f'生成超时（>{timeout_sec}s），已中止本轮。'
+        # Criteria failed to stop the run (very old transformers): report
+        # honestly instead of pretending the generation was stopped.
+        result['error'] = (f'生成超时（>{timeout_sec}s）；stopping-criteria 未能在宽限期内结束生成，'
+                           f'推理可能仍在后台进行，请检查 GPU 占用。')
+        result['timed_out'] = True
+    elif result['error'] is None and result['elapsed_sec'] >= timeout_sec:
+        # The stopping-criteria fired mid-generation: partial text may be
+        # present; mark it honestly so callers know this answer is truncated.
+        result['error'] = (f'生成超时（>={timeout_sec}s），已通过 stopping-criteria 中止本轮；'
+                           f'以下为截断的部分回答。')
+        result['timed_out'] = True
     return result
 
 

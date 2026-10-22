@@ -2,7 +2,9 @@
 
 Logic (transparent, deterministic, testable):
 1. Degeneration signals per eval sample:
-   - repetition loop: a short phrase repeated many times (round-2 sft-020 failure mode)
+   - repetition loop: round-4.1 unified rule (sentence-level loop in prose
+     or >=3 consecutive identical code lines; the old 2-gram word-frequency
+     check was removed because it false-positived on code and topical words)
    - low reference overlap: answer shares too few meaningful words with the
      human-written reference answer (round-2 sft-019 off-topic signal)
 2. Promotion decision (AGENTS.md rule 7):
@@ -16,15 +18,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-# Repetition-loop detection: any n-gram (2+ chars window on words) repeating
-# this many times inside one answer indicates degeneration.
+from growthfoundry.code_metrics import has_repetition_loop
+
+# Kept for backward compatibility of imports only; semantics now delegated
+# to the unified repetition rule in code_metrics.
 REPEAT_THRESHOLD = 3
 MIN_ANSWER_CHARS = 12
 # Meaningful-word overlap with reference below this ratio signals off-topic.
 OVERLAP_FLOOR = 0.15
-
-_STOPWORDS = {"的", "了", "是", "在", "和", "与", "或", "一个", "如果", "可以", "需要",
-              "the", "a", "an", "of", "to", "is", "are", "and", "or", "if", "for", "in"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class PromotionDecision:
 
 def _words(text: str) -> list[str]:
     # crude CJK+latin word split: CJK bigrams + latin words; stopword-filtered
+    # (used by reference overlap only; repetition uses the unified rule)
     text = str(text or "").strip()
     if not text:
         return []
@@ -57,21 +59,22 @@ def _words(text: str) -> list[str]:
             grams.append(run)
         else:
             grams.extend(run[i:i + 2] for i in range(len(run) - 1))
-    return [g for g in grams if g not in _STOPWORDS]
+    return [g for g in grams if g not in _OVERLAP_STOPWORDS]
+
+
+# Stopwords for the reference-overlap metric only.
+_OVERLAP_STOPWORDS = {"的", "了", "是", "在", "和", "与", "或", "一个", "如果", "可以", "需要",
+                      "the", "a", "an", "of", "to", "is", "are", "and", "or", "if", "for", "in"}
 
 
 def check_repetition(answer: str, threshold: int = REPEAT_THRESHOLD) -> bool:
-    """True when any word/gram repeats >= threshold times (loop degeneration)."""
-    text = str(answer or "").strip()
-    if len(text) < MIN_ANSWER_CHARS:
-        return False  # too short to judge; short answers are not loops
-    words = _words(text)
-    if not words:
-        return False
-    counts: dict[str, int] = {}
-    for w in words:
-        counts[w] = counts.get(w, 0) + 1
-    return max(counts.values()) >= threshold
+    """Unified repetition signal (round-4.1): delegates to code_metrics.
+
+    The old 2-gram word-frequency check is replaced by the sentence-level
+    loop + consecutive-duplicate-lines rule, so the regression gate, the
+    candidate audit and the coding pipeline all share one judgment.
+    """
+    return has_repetition_loop(answer)
 
 
 def reference_overlap(answer: str, reference: str) -> float:

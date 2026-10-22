@@ -46,41 +46,48 @@ BAD_SYNTAX = '```python\ndef add(:\n    pass\n```'
 
 
 class ProcessTaskTests(unittest.TestCase):
+    """These tests use KNOWN fixed content (mock answers), so they run the
+    harness policy - the documented path for pipeline self-tests. The
+    round-4.1 default 'blocked' never executes, which would make every
+    execution assertion meaningless here."""
 
     def setUp(self):
         self.model, self.tok = MockModel(), MockTokenizer()
 
+    def _run(self, rec, *args, **kwargs):
+        kwargs.setdefault('exec_policy', 'harness')
+        return coding_pipeline.process_task(self.model, self.tok, rec, *args, **kwargs)
+
     def test_a_patch_fixes_failure(self):
         coding_pipeline.generate_once = fake_generate_factory([WRONG, FIXED])
-        r = coding_pipeline.process_task(self.model, self.tok, REC, 300, 5, 10)
+        r = self._run(REC, 300, 5, 10)
         self.assertTrue(r['passed'])
         self.assertTrue(r['patched'])
         self.assertEqual(r['failure'], 'none')
 
     def test_b_one_patch_attempt_only(self):
         coding_pipeline.generate_once = fake_generate_factory([WRONG, WRONG])
-        r = coding_pipeline.process_task(self.model, self.tok, REC, 300, 5, 10)
+        r = self._run(REC, 300, 5, 10)
         self.assertFalse(r['passed'])
         self.assertTrue(r['patched'])
         self.assertEqual(r['failure'], 'wrong_result')
 
     def test_c_syntax_error_skips_exec(self):
         coding_pipeline.generate_once = fake_generate_factory([BAD_SYNTAX, FIXED])
-        r = coding_pipeline.process_task(self.model, self.tok, REC, 300, 5, 10)
+        r = self._run(REC, 300, 5, 10)
         self.assertFalse(r['passed'])
         self.assertFalse(r['patched'])
         self.assertFalse(r['stages']['syntax_ok'])
 
     def test_d_correct_first_time_no_patch(self):
         coding_pipeline.generate_once = fake_generate_factory([FIXED])
-        r = coding_pipeline.process_task(self.model, self.tok, REC, 300, 5, 10)
+        r = self._run(REC, 300, 5, 10)
         self.assertTrue(r['passed'])
         self.assertFalse(r['patched'])
 
     def test_e_patch_disabled(self):
         coding_pipeline.generate_once = fake_generate_factory([WRONG, FIXED])
-        r = coding_pipeline.process_task(self.model, self.tok, REC, 300, 5, 10,
-                                         patch_attempt=False)
+        r = self._run(REC, 300, 5, 10, patch_attempt=False)
         self.assertFalse(r['passed'])
         self.assertFalse(r['patched'])
         self.assertEqual(r['failure'], 'wrong_result')
@@ -89,8 +96,19 @@ class ProcessTaskTests(unittest.TestCase):
         # Code form of sft-020: >=3 consecutive identical code lines.
         loop_code = '```python\ndef add(a, b):\n    return a\n    return a\n    return a\n```'
         coding_pipeline.generate_once = fake_generate_factory([loop_code])
-        r = coding_pipeline.process_task(self.model, self.tok, REC, 300, 5, 10)
+        r = self._run(REC, 300, 5, 10)
         self.assertTrue(r['stages']['has_repetition_loop'])
+
+    def test_g_blocked_default_never_executes(self):
+        # Round-4.1 default: exec_policy=blocked records BLOCKED and never
+        # marks the task as passed, even with correct code.
+        coding_pipeline.generate_once = fake_generate_factory([FIXED])
+        r = coding_pipeline.process_task(self.model, self.tok, REC, 300, 5, 10,
+                                         exec_policy='blocked')
+        self.assertFalse(r['passed'])
+        self.assertFalse(r['executed'])
+        self.assertEqual(r['failure'], 'blocked')
+        self.assertEqual(r['stages']['exec_status'], 'BLOCKED')
 
 
 if __name__ == '__main__':

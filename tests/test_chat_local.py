@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from chat_local import adapter_version_info, build_arg_parser, print_turn
+from chat_local import (
+    adapter_base_matches, adapter_version_info, build_arg_parser, print_turn,
+)
 
 
 class VersionInfoTests(unittest.TestCase):
@@ -60,6 +62,43 @@ class PrintTurnTests(unittest.TestCase):
     def test_empty_answer(self):
         res = {'text': '   ', 'error': None, 'elapsed_sec': 1.0, 'new_tokens': 3}
         print_turn('test', res)
+
+
+class BaseMatchTests(unittest.TestCase):
+    """Round-4.1 Task 3: LoRA base-compatibility check before loading."""
+
+    @staticmethod
+    def _write_adapter(cfg: dict) -> str:
+        td = tempfile.mkdtemp(prefix='agf_base_match_')
+        (Path(td) / 'adapter_config.json').write_text(json.dumps(cfg), encoding='utf-8')
+        return td
+
+    def test_real_v0_config_matches_qwen3_06b(self):
+        # The real v0 adapter records base_model_name_or_path = Qwen/Qwen3-0.6B.
+        repo_cfg = (Path(__file__).resolve().parents[1] / 'models'
+                    / 'qwen3-0.6b-lora-v0' / 'adapter_config.json')
+        if not repo_cfg.exists():
+            self.skipTest('v0 adapter not present on this machine')
+        ok, ab, reason = adapter_base_matches(str(repo_cfg.parent), 'Qwen/Qwen3-0.6B')
+        self.assertTrue(ok, reason)
+        self.assertEqual(ab, 'Qwen/Qwen3-0.6B')
+
+    def test_cross_base_rejected(self):
+        td = self._write_adapter({'base_model_name_or_path': 'Qwen/Qwen3-0.6B'})
+        ok, ab, reason = adapter_base_matches(td, 'Qwen/Qwen3-4B')
+        self.assertFalse(ok)
+        self.assertIn('refusing to mount', reason)
+
+    def test_no_provenance_rejected(self):
+        td = self._write_adapter({'r': 8})
+        ok, ab, reason = adapter_base_matches(td, 'Qwen/Qwen3-0.6B')
+        self.assertFalse(ok)
+        self.assertIn('no base model', reason)
+
+    def test_trailing_slash_normalized(self):
+        td = self._write_adapter({'base_model': 'Qwen/Qwen3-0.6B/'})
+        ok, _, reason = adapter_base_matches(td, 'Qwen/Qwen3-0.6B')
+        self.assertTrue(ok, reason)
 
 
 if __name__ == '__main__':

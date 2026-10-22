@@ -97,14 +97,44 @@ def adapter_base_compatible(adapter_config: dict, target_base: str) -> bool:
     return norm(adapter_base) == norm(target_base)
 
 
-def champion_comparison_ready(champion: Champion | None, champion_eval_path: str | Path | None) -> tuple[bool, str]:
-    """Conservative gate: comparison requires BOTH a champion and its per-sample
-    eval evidence; missing either -> HOLD."""
+def champion_comparison_ready(champion: Champion | None, champion_eval_path: str | Path | None,
+                              expected_samples: int | None = None,
+                              expected_dataset_sha256: str | None = None) -> tuple[bool, str]:
+    """Conservative gate (round-4.1 hardened): comparison requires a champion
+    AND intact per-sample eval evidence; anything unverifiable -> HOLD.
+
+    Anti-bypass checks:
+    - champion registered (else HOLD);
+    - evidence file exists and is valid JSON with an 'items' list (an empty
+      file or '{}' no longer passes);
+    - evidence holds at least expected_samples records (default: >=2);
+    - when expected_dataset_sha256 is given, the evidence must carry a
+      matching dataset fingerprint (same dataset as the candidate run), so a
+      different dataset cannot sneak past the regression gate.
+    """
     if champion is None:
         return False, 'no champion registered; register v0 with evidence before candidate runs'
     if champion_eval_path is None or not Path(champion_eval_path).exists():
         return False, f'champion per-sample eval evidence missing: {champion_eval_path}; conservative HOLD'
-    return True, 'champion and evidence present'
+    try:
+        data = json.loads(Path(champion_eval_path).read_text(encoding='utf-8'))
+    except Exception as ex:
+        return False, f'champion eval evidence unreadable: {type(ex).__name__}; conservative HOLD'
+    items = data.get('items') if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        return False, ('champion eval evidence has no per-sample items; '
+                       'surface-only or empty evidence cannot anchor a comparison; conservative HOLD')
+    min_needed = expected_samples if expected_samples is not None else 2
+    if len(items) < min_needed:
+        return False, (f'champion eval evidence has {len(items)} samples, need >= {min_needed}; '
+                       'conservative HOLD')
+    if expected_dataset_sha256 is not None:
+        fp = data.get('dataset_fingerprint') or {}
+        if fp.get('sha256') != expected_dataset_sha256:
+            return False, ('champion eval evidence dataset fingerprint mismatch '
+                           f'(expected {expected_dataset_sha256[:12]}…, got {str(fp.get("sha256"))[:12]}…); '
+                           'a different dataset must not bypass the regression gate; conservative HOLD')
+    return True, 'champion and intact evidence present'
 
 
 def build_promotion_suggestion(decision: str, reasons: list[str], candidate: str,
