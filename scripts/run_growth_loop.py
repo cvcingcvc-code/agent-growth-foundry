@@ -87,7 +87,8 @@ def main() -> None:
         return
 
     # ---- Step 2: train (real GPU LoRA; subprocess enforces timeout) --------
-    train_cmd = [a.python, 'scripts/train_lora.py', '--dataset', a.dataset,
+    train_cmd = [a.python, 'scripts/train_lora.py', '--model', a.model,
+                 '--dataset', a.dataset,
                  '--output', a.adapter, '--epochs', str(a.epochs), '--max-length', str(a.max_length)]
     train_res = run_subprocess(train_cmd, timeout_sec=a.train_timeout_sec)
     (evidence / f'{run_id}-train.json').write_text(
@@ -102,7 +103,8 @@ def main() -> None:
 
     # ---- Step 3: evaluate base-vs-adapter on the fixed eval set ------------
     eval_out = f'outputs/base_vs_lora_eval_{Path(a.adapter).name}.json'
-    eval_cmd = [a.python, 'scripts/eval_lora.py', '--dataset', a.dataset,
+    eval_cmd = [a.python, 'scripts/eval_lora.py', '--model', a.model,
+                '--dataset', a.dataset,
                 '--adapter', a.adapter, '--output', eval_out]
     eval_res = run_subprocess(eval_cmd, timeout_sec=a.train_timeout_sec)
     (evidence / f'{run_id}-eval.json').write_text(
