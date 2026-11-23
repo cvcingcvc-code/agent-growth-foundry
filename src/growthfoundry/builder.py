@@ -171,13 +171,9 @@ def build_product(candidate: dict, db_path: str | Path, output_root: str | Path,
 
         events = []
         # BUILDING
-        store.db.execute(
-            "UPDATE candidates SET state='BUILDING', reason=? WHERE id=?",
-            ("builder: generating original content pack", cid))
-        store.db.execute(
-            "INSERT INTO events(candidate_id,state,note,time_utc) VALUES(?,?,?,?)",
-            (cid, "BUILDING", "builder: start building original content pack", now()))
-        store.db.commit()
+        store.advance_state(cid, "BUILDING",
+                            reason="builder: generating original content pack",
+                            note="builder: start building original content pack")
 
         # write original artifacts (self_authored)
         files = {
@@ -189,33 +185,19 @@ def build_product(candidate: dict, db_path: str | Path, output_root: str | Path,
             (out_dir / name).write_text(text, encoding="utf-8")
 
         # TESTING
-        store.db.execute(
-            "UPDATE candidates SET state='TESTING', reason=? WHERE id=?",
-            ("builder: verifying artifacts exist", cid))
-        store.db.execute(
-            "INSERT INTO events(candidate_id,state,note,time_utc) VALUES(?,?,?,?)",
-            (cid, "TESTING", "builder: verify artifact files", now()))
-        store.db.commit()
+        store.advance_state(cid, "TESTING",
+                            reason="builder: verifying artifacts exist",
+                            note="builder: verify artifact files")
         missing = [n for n in files if not (out_dir / n).is_file() or (out_dir / n).stat().st_size == 0]
         if missing:
-            store.db.execute(
-                "UPDATE candidates SET state='FAILED', reason=? WHERE id=?",
-                (f"builder: missing artifacts {missing}", cid))
-            store.db.execute(
-                "INSERT INTO events(candidate_id,state,note,time_utc) VALUES(?,?,?,?)",
-                (cid, "FAILED", f"missing artifacts: {missing}", now()))
-            store.db.commit()
+            store.advance_state(cid, "FAILED",
+                                reason=f"builder: missing artifacts {missing}",
+                                note=f"missing artifacts: {missing}")
             raise RuntimeError(f"artifact check failed for {cid}: missing {missing}")
 
         # READY_FOR_REVIEW
         note = "builder: artifacts verified, awaiting human review; publish_enabled stays false"
-        store.db.execute(
-            "UPDATE candidates SET state='READY_FOR_REVIEW', reason=? WHERE id=?",
-            (note, cid))
-        store.db.execute(
-            "INSERT INTO events(candidate_id,state,note,time_utc) VALUES(?,?,?,?)",
-            (cid, "READY_FOR_REVIEW", note, now()))
-        store.db.commit()
+        store.advance_state(cid, "READY_FOR_REVIEW", reason=note, note=note)
 
         result = {
             "candidate_id": cid,

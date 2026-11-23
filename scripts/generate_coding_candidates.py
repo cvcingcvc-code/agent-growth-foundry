@@ -334,7 +334,7 @@ COUNTEREXAMPLES = [
     # anti-020: at most one sentence, no repetition loop.
     ("ce-020-a",
      "写一个 while 循环打印 1 到 3，然后用一句话说明循环什么时候停。",
-     "```python\nfor i in range(1, 4):\n    print(i)\n```\n循环变量到达 4 时停止。",
+     "```python\ni = 1\nwhile i <= 3:\n    print(i)\n    i += 1\n```\n循环条件 i <= 3 不再满足时停止。",
      "counterexample to sft-020 (repetition loop): exactly one sentence",
      {"task_type": "counterexample_020"}),
     ("ce-020-b",

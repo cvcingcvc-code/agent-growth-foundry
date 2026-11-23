@@ -18,10 +18,10 @@
 
 ### Phase 0：Bug 修复（P0 阻塞项）
 
-- [ ] V2-0-1：修复 run_growth_loop.py 门控仲裁覆盖逻辑（exec PROMOTE 不应覆盖 regression HOLD）
-- [ ] V2-0-2：修复 store.py `INSERT OR IGNORE` 状态更新缺陷，增加 `advance_state()` 方法
-- [ ] V2-0-3：修复 test_core.py 导入路径问题（非根目录 pytest 可运行）
-- [ ] V2-0-4：修复 coding_regression_fixed.jsonl 第 4/7 题 `/n` 笔误 + generate_coding_candidates.py ce-020-a 题目答案不匹配
+- [x] V2-0-1：修复 run_growth_loop.py 门控仲裁覆盖逻辑（exec PROMOTE 不应覆盖 regression HOLD；已修复）
+- [x] V2-0-2：修复 store.py `INSERT OR IGNORE` 状态更新缺陷，增加 `advance_state()` 方法（builder.py 同步调用；test_core.py 增加单测覆盖）
+- [x] V2-0-3：修复 test_core.py 导入路径问题（非根目录 pytest 可运行；已修复）
+- [x] V2-0-4：修复 coding_regression_fixed.jsonl 第 4/7 题 `/n` 笔误 + generate_coding_candidates.py ce-020-a 题目答案不匹配（已修复并重新审核）
 
 ### Phase 1：数据基础建设（P0 最高优先级）
 

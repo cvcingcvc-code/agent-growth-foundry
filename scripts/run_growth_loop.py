@@ -245,10 +245,14 @@ def main() -> None:
     champion_report = load_training_report(ROOT / a.prev_adapter) if (ROOT / a.prev_adapter) else None
     decision = decide_promotion(report, champion_report or report,
                                 new_checks, old_checks, max_regressions=a.max_regressions)
-    # Exec-level gate already PROMOTEd; keep the stricter of the two verdicts.
-    if exec_decision is not None and exec_decision['decision'] == 'PROMOTE':
+    # Exec-level gate was either skipped or returned PROMOTE (HOLD early-returns above).
+    # Keep the stricter of the two verdicts: regression gate must ALSO promote.
+    if exec_decision is not None:
         decision_reasons = decision.reasons + ['exec-gate: ' + r for r in exec_decision['reasons']]
-        final_decision = 'PROMOTE'
+        if decision.decision == 'PROMOTE' and exec_decision['decision'] == 'PROMOTE':
+            final_decision = 'PROMOTE'
+        else:
+            final_decision = 'HOLD'
         final_regressions = decision.new_degenerated
     else:
         decision_reasons = decision.reasons

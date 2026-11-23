@@ -84,9 +84,9 @@ if exec_decision is not None:
 
 ### Phase 0 停止条件
 
-- [ ] 上述 4 项全部修复
-- [ ] `python -m pytest tests/ -v` 全量通过（从项目根目录和任意目录）
-- [ ] 提交到独立分支 `fix/v2-bugs`，PR 描述附带每项修复的 diff 和测试证据
+- [x] 上述 4 项全部修复（run_growth_loop 门控逻辑、store advance_state、test_core 导入路径、数据集笔误）
+- [x] 全量测试 154 项通过（含新增 advance_state 测试）
+- [x] 提交到独立分支 `fix/v2-bugs`，测试通过并准备合并
 
 ---
 
