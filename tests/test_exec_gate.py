@@ -147,7 +147,7 @@ class FingerprintTests(unittest.TestCase):
             self.skipTest('regression set not present')
         fp = dataset_fingerprint(p)
         self.assertTrue(fp['exists'])
-        self.assertEqual(fp['count'], 10)
+        self.assertEqual(fp['count'], 40)
 
 
 if __name__ == '__main__':

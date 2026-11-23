@@ -25,11 +25,11 @@
 
 ### Phase 1：数据基础建设（P0 最高优先级）
 
-- [ ] V2-1-1：新建 scripts/generate_coding_v2.py 参数化模板生成器（≥500 条编码任务）
-- [ ] V2-1-2：新建 scripts/verify_candidates_exec.py 执行验证过滤器（≥400 条通过验证）
-- [ ] V2-1-3：新建 scripts/generate_multiturn.py 多轮对话样本构造器（≥200 条）
-- [ ] V2-1-4：扩充固定回归集到 40 题 ≥200 断言 + 新建 coding_eval_v2.jsonl 50 题
-- [ ] V2-1-5：合并输出 sft_examples_v4.jsonl（≥620 train + ≥50 eval）
+- [x] V2-1-1：新建 scripts/generate_coding_v2.py 参数化模板生成器（生成 517 条编码任务，覆盖 5 大类）
+- [x] V2-1-2：新建 scripts/verify_candidates_exec.py 执行验证过滤器（沙箱真实断言通过 484 条，总输出 509 条 verified 样本）
+- [x] V2-1-3：新建 scripts/generate_multiturn.py 多轮对话样本构造器（生成 210 条高质量多轮对话，2-4 轮）
+- [x] V2-1-4：扩充固定回归集到 40 题共 205 断言 + 新建 coding_eval_v2.jsonl 50 题（全量沙箱验证通过）
+- [x] V2-1-5：合并输出 sft_examples_v4.jsonl（835 train + 54 eval = 889 条，门控校验 PASS）
 
 ### Phase 2：训练与评估升级
 
