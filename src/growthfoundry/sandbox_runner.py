@@ -46,10 +46,9 @@ _BLOCKED_TOPLEVEL = {
     "shutil", "pathlib", "builtins",
 }
 
-# Purge any pre-loaded blocked modules (defense in depth)
-for _name in list(_sys.modules):
-    if _name.split(".")[0] in _BLOCKED_TOPLEVEL:
-        del _sys.modules[_name]
+# Note: we do NOT purge sys.modules here — a fresh child process has not
+# pre-loaded the blocked modules, and purging can break stdlib imports that
+# the runner shell itself needs (e.g. re's internal sub-modules).
 
 
 class _NetworkGuard(_abc.MetaPathFinder):
