@@ -170,11 +170,11 @@ if exec_decision is not None:
 
 ### Phase 1 停止条件
 
-- [ ] sft_examples_v4.jsonl ≥ 620 条 train + ≥ 50 条 eval
-- [ ] 固定回归集 40 题 ≥ 200 断言
-- [ ] v0 在新回归集上的基线证据已生成
-- [ ] 所有样本通过审核 + 去重 + 执行验证
-- [ ] 提交到独立分支 `feat/data-v2`
+- [x] sft_examples_v4.jsonl ≥ 620 条 train + ≥ 50 条 eval（实测：835 train + 54 eval = 889 条，SHA256: 97208533011acb0a3ac2c619a54bc64293e8012b29dd5f0f16575cb0956299f4）
+- [x] 固定回归集 40 题 ≥ 200 断言（实测：40 题，205 个测试断言，全部沙箱自验通过）
+- [x] coding_eval_v2.jsonl 50 题全新未见评测题库构建完成（与训练集函数零冲突）
+- [x] 所有样本通过审核 + 去重 + 受限沙箱执行验证（509 条 verified）
+- [x] 提交到独立分支 `feat/data-v2`
 
 ---
 

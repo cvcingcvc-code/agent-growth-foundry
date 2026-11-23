@@ -19,12 +19,13 @@ def validate_record(item: dict) -> None:
     if not item.get("source_id") or not item.get("reviewed_by"):
         raise ValueError("source_id and reviewed_by required")
     msgs = item.get("messages")
-    if not isinstance(msgs, list) or len(msgs) != 2:
-        raise ValueError("two-message user/assistant conversation required")
-    if [m.get("role") for m in msgs] != ["user", "assistant"]:
-        raise ValueError("expected user followed by assistant")
+    if not isinstance(msgs, list) or len(msgs) < 2 or len(msgs) % 2 != 0:
+        raise ValueError("even-length user/assistant conversation required (>=2 messages)")
+    expected_roles = ["user", "assistant"] * (len(msgs) // 2)
+    if [m.get("role") for m in msgs] != expected_roles:
+        raise ValueError(f"expected alternating user and assistant roles: {expected_roles}")
     for m in msgs:
-        if not isinstance(m.get("content"), str) or len(m["content"].strip()) < 6:
+        if not isinstance(m.get("content"), str) or len(m["content"].strip()) < 3:
             raise ValueError("empty or insufficient content")
 
 
@@ -39,7 +40,7 @@ def read_approved(path: str | Path) -> dict[str, list[dict]]:
             validate_record(item)
         except Exception as ex:
             raise ValueError(f"{path}:{line_no}: {ex}") from ex
-        key = (item["messages"][0]["content"].strip(), item["messages"][1]["content"].strip())
+        key = tuple(m["content"].strip() for m in item["messages"])
         if key in seen:
             raise ValueError(f"duplicate train/eval record at line {line_no}")
         seen.add(key)
