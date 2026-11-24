@@ -9,6 +9,8 @@ from growthfoundry.candidate_audit import (
     audit_candidates, check_record, defines_function, has_consecutive_dup_lines,
     has_sentence_loop, scan_eval_leakage, split_prose_and_code,
 )
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+from generate_coding_v2 import self_test_assertions
 
 
 def _rec(sid, ttype, q, a, **extra):
@@ -157,6 +159,49 @@ class LeakageTests(unittest.TestCase):
             ['写一个 foo_bar(x) 函数'])
         self.assertEqual(len(rep), 1)
         self.assertEqual(rep[0]['overlapping_names'], ['foo_bar'])
+
+
+class SelfTestAssertionsTests(unittest.TestCase):
+
+    def test_valid_function_passes(self):
+        code = "def add(a, b):\n    return a + b"
+        hint = "add(1, 2) == 3; add(-1, 1) == 0"
+        self.assertTrue(self_test_assertions(code, hint))
+
+    def test_incorrect_assertion_fails(self):
+        code = "def add(a, b):\n    return a + b"
+        hint = "add(1, 2) == 4"
+        self.assertFalse(self_test_assertions(code, hint))
+
+    def test_syntax_error_fails(self):
+        code = "def add(a, b)\n    return a + b"
+        hint = "add(1, 2) == 3"
+        self.assertFalse(self_test_assertions(code, hint))
+
+    def test_blocks_os_import(self):
+        code = "import os\ndef f():\n    return 1"
+        hint = "f() == 1"
+        self.assertFalse(self_test_assertions(code, hint))
+
+    def test_blocks_subprocess_import(self):
+        code = "import subprocess\ndef f():\n    return 1"
+        hint = "f() == 1"
+        self.assertFalse(self_test_assertions(code, hint))
+
+    def test_blocks_open_call(self):
+        code = "def f():\n    open('test.txt', 'w')\n    return 1"
+        hint = "f() == 1"
+        self.assertFalse(self_test_assertions(code, hint))
+
+    def test_blocks_dunder_access_in_assertion(self):
+        code = "def f():\n    return 1"
+        hint = "f().__class__.__bases__ == ()"
+        self.assertFalse(self_test_assertions(code, hint))
+
+    def test_blocks_eval_call(self):
+        code = "def f():\n    return eval('1 + 1')"
+        hint = "f() == 2"
+        self.assertFalse(self_test_assertions(code, hint))
 
 
 if __name__ == '__main__':

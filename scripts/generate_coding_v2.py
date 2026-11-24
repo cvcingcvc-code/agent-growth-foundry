@@ -50,16 +50,50 @@ EXISTING_V1_FUNCS = {
 
 FORBIDDEN_NAMES = EXISTING_EVAL_FUNCS | EXISTING_V1_FUNCS
 
+SAFE_MODULE_WHITELIST = {
+    'math', 'string', 're', 'collections', 'itertools', 'functools',
+    'datetime', 'heapq', 'bisect', 'json', 'typing', 'random', 'copy'
+}
+
+DANGEROUS_CALLS = {'eval', 'exec', 'compile', 'open', 'input', 'breakpoint', '__import__'}
+
+
+def _validate_ast_safety(tree: ast.AST) -> None:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            raise ValueError(f"Dunder attribute access forbidden: {node.attr}")
+        if isinstance(node, ast.Name) and node.id in DANGEROUS_CALLS:
+            raise ValueError(f"Call to {node.id} forbidden")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split('.')[0]
+                if top not in SAFE_MODULE_WHITELIST:
+                    raise ValueError(f"Import of {top} forbidden")
+        if isinstance(node, ast.ImportFrom):
+            top = (node.module or '').split('.')[0]
+            if top not in SAFE_MODULE_WHITELIST:
+                raise ValueError(f"Import from {top} forbidden")
+
 
 def self_test_assertions(code_str: str, test_hint: str) -> bool:
-    """Execute code in a local namespace and run each assertion."""
-    env: dict = {}
+    """Execute code in a local namespace and run each assertion with AST validation."""
     try:
-        ast.parse(code_str)
-        exec(code_str, env, env)
+        code_tree = ast.parse(code_str)
+        _validate_ast_safety(code_tree)
+
+        builtins_dict = __builtins__ if isinstance(__builtins__, dict) else __builtins__.__dict__
+        safe_builtins = dict(builtins_dict)
+        for bad in ("open", "exec", "eval", "compile", "breakpoint"):
+            safe_builtins.pop(bad, None)
+
+        env: dict = {"__builtins__": safe_builtins}
+        exec(compile(code_tree, filename="<synthetic_self_test>", mode="exec"), env, env)
+
         assertions = [s.strip() for s in test_hint.split(';') if s.strip()]
         for stmt in assertions:
-            val = eval(stmt, env, env)
+            stmt_tree = ast.parse(stmt, mode='eval')
+            _validate_ast_safety(stmt_tree)
+            val = eval(compile(stmt_tree, filename="<synthetic_assertion>", mode="eval"), env, env)
             if not val:
                 return False
         return True

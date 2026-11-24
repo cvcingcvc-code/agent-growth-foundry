@@ -71,6 +71,14 @@ class CoreTests(unittest.TestCase):
                 store.advance_state('c-unknown', 'BUILDING')
             store.close()
 
+    def test_store_wal_and_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / 'state.db'
+            store = Store(db_path)
+            mode = store.db.execute("PRAGMA journal_mode;").fetchone()[0]
+            self.assertEqual(mode.lower(), 'wal')
+            store.close()
+
 
 class ConnectorContractTests(unittest.TestCase):
     def test_disallows_unexpected_repo_identifiers(self):

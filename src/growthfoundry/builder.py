@@ -6,6 +6,7 @@ from any external repository. Stage transitions BUILDING -> TESTING ->
 READY_FOR_REVIEW are appended to the SQLite event log.
 """
 import json
+import re
 from pathlib import Path
 from .store import Store, now
 
@@ -13,7 +14,9 @@ STATES_ADVANCE = ("BUILDING", "TESTING", "READY_FOR_REVIEW")
 
 
 def _slugify(candidate_id: str) -> str:
-    return candidate_id.replace("/", "_").replace(":", "_")
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]", "_", str(candidate_id or ""))
+    sanitized = re.sub(r"\.{2,}", "_", sanitized).strip("._")
+    return sanitized or "candidate"
 
 
 def _render_readme(candidate: dict, score_info: dict | None) -> str:
@@ -166,7 +169,13 @@ def build_product(candidate: dict, db_path: str | Path, output_root: str | Path,
         if current["state"] != "REVIEW":
             raise ValueError(f"candidate {cid} in state {current['state']}; only REVIEW candidates may be built")
 
-        out_dir = Path(output_root) / _slugify(cid)
+        slug = _slugify(cid)
+        root_resolved = Path(output_root).resolve()
+        out_dir = (root_resolved / slug).resolve()
+        try:
+            out_dir.relative_to(root_resolved)
+        except ValueError:
+            raise ValueError(f"Path traversal detected in candidate id '{cid}'")
         out_dir.mkdir(parents=True, exist_ok=True)
 
         events = []

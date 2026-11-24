@@ -68,6 +68,27 @@ class RunnerTests(unittest.TestCase):
         r = run_restricted('import subprocess\ndef f():\n    return 1', 'f()==1', reviewed=True)
         self.assertIn('blocked', r['stderr'])
 
+    def test_os_import_blocked(self):
+        r = run_restricted('import os\ndef f():\n    return 1', 'f()==1', reviewed=True)
+        self.assertIn('blocked', r['stderr'])
+
+    def test_open_builtin_blocked(self):
+        r = run_restricted('def f():\n    open("test.txt", "w")\n    return 1', 'f()==1', reviewed=True)
+        self.assertEqual(r['status'], 'FAILED')
+        self.assertIn('PermissionError', r['stderr'])
+
+    def test_safe_eval_blocks_dunder_access(self):
+        # Hint trying to access dunder attribute
+        r = run_restricted('def f():\n    return 1', 'f().__class__.__bases__==()', reviewed=True)
+        self.assertEqual(r['status'], 'FAILED')
+        self.assertIn('forbidden', r['stderr'])
+
+    def test_safe_eval_blocks_forbidden_names(self):
+        # Hint trying to call __import__
+        r = run_restricted('def f():\n    return 1', '__import__("os").system("echo 1")==0', reviewed=True)
+        self.assertEqual(r['status'], 'FAILED')
+        self.assertIn('forbidden', r['stderr'])
+
     def test_memory_limit_enforced(self):
         # 300MB incremental allocation under a 64MB job limit dies fast.
         code = 'buf = []\nfor i in range(20):\n    buf.append(bytearray(16 * 1024 * 1024))\ndef f():\n    return 1'

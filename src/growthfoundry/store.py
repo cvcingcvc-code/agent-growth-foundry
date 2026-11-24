@@ -31,8 +31,15 @@ def now() -> str:
 class Store:
     def __init__(self, path: str | Path):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path)
+        if str(self.path) != ":memory:":
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(self.path, timeout=30.0)
+        try:
+            if str(self.path) != ":memory:":
+                self.db.execute("PRAGMA journal_mode=WAL;")
+                self.db.execute("PRAGMA synchronous=NORMAL;")
+        except sqlite3.OperationalError:
+            pass
         self.db.executescript(SCHEMA)
 
     def put(self, item: dict, state: str, reason: str):

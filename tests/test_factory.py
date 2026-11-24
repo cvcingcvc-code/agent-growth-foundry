@@ -7,7 +7,7 @@ from pathlib import Path
 from sys import path
 path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from growthfoundry.score import score_candidate, rank_candidates
-from growthfoundry.builder import build_product, build_candidates
+from growthfoundry.builder import build_product, build_candidates, _slugify
 from growthfoundry.store import Store
 
 NOW = datetime(2026, 10, 21, tzinfo=timezone.utc)
@@ -131,6 +131,24 @@ class BuilderTests(unittest.TestCase):
             self._seed(db)
             res = build_product(self._cand('c1'), db, d / 'packs')
             self.assertFalse(res['publish_enabled'])
+
+    def test_slugify_neutralizes_path_traversal(self):
+        self.assertEqual(_slugify("../../etc/passwd"), "etc_passwd")
+        self.assertEqual(_slugify(r"..\..\windows\system32"), "windows_system32")
+        self.assertEqual(_slugify("../../../"), "candidate")
+
+    def test_build_product_traversal_contained(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            db = d / 'state.db'
+            store = Store(db)
+            store.put({'id': '../../escape', 'title': 'Escape', 'license': 'MIT', 'source_url': 'https://github.com/a/b'},
+                      'REVIEW', 'test seed')
+            store.close()
+            packs_dir = d / 'packs'
+            res = build_product(self._cand('../../escape'), db, packs_dir)
+            out_dir = Path(res['output_dir'])
+            self.assertTrue(out_dir.resolve().is_relative_to(packs_dir.resolve()))
 
 
 if __name__ == '__main__':

@@ -43,13 +43,9 @@ import sys as _sys
 _BLOCKED_TOPLEVEL = {
     "socket", "ssl", "urllib", "http", "ftplib", "telnetlib", "smtplib",
     "xmlrpc", "asyncio", "subprocess", "ctypes", "multiprocessing",
-    "shutil", "pathlib", "builtins",
+    "shutil", "pathlib", "builtins", "os", "platform", "posix", "nt",
+    "webbrowser", "pdb", "pty", "commands", "io", "importlib",
 }
-
-# Note: we do NOT purge sys.modules here — a fresh child process has not
-# pre-loaded the blocked modules, and purging can break stdlib imports that
-# the runner shell itself needs (e.g. re's internal sub-modules).
-
 
 class _NetworkGuard(_abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
@@ -60,14 +56,32 @@ class _NetworkGuard(_abc.MetaPathFinder):
                 "(network/process/filesystem guard)" % top)
         return None
 
-
 _sys.meta_path.insert(0, _NetworkGuard())
+
+# Remove sensitive preloaded modules so subsequent imports are intercepted
+for _m in ("os", "subprocess", "socket", "urllib", "http", "shutil", "pathlib", "ctypes", "io", "platform"):
+    _sys.modules.pop(_m, None)
 '''
 
 RUNNER_SHELL = '''{guard}
 import sys as _sys
 import re
+import ast as _ast
 import json as _json
+import builtins as _builtins
+
+def _blocked_open(*args, **kwargs):
+    raise PermissionError("File open() is blocked in restricted runner")
+_builtins.open = _blocked_open
+
+def _safe_eval(expr_str, namespace):
+    node = _ast.parse(expr_str, mode='eval')
+    for sub in _ast.walk(node):
+        if isinstance(sub, _ast.Attribute) and sub.attr.startswith("__"):
+            raise ValueError("access to private/dunder attribute is forbidden: " + str(sub.attr))
+        if isinstance(sub, _ast.Name) and sub.id in ("__import__", "eval", "exec", "compile", "open"):
+            raise ValueError("call to forbidden function in test expression: " + str(sub.id))
+    return eval(expr_str, dict(namespace))
 
 def _hint_to_asserts(hint, namespace):
     results = []
@@ -79,7 +93,7 @@ def _hint_to_asserts(hint, namespace):
         if not m:
             raise ValueError("bad hint fragment: " + part)
         expr, op, expected = m.group(1).strip(), m.group(2), m.group(3).strip()
-        actual = eval(expr, dict(namespace))
+        actual = _safe_eval(expr, dict(namespace))
         results.append((part, op, expected, actual))
     return results
 
@@ -88,7 +102,7 @@ def _hint_to_asserts(hint, namespace):
 _ns = dict([_n for _n in globals().items() if not _n[0].startswith("_")])
 failures = []
 for part, op, expected_raw, actual in _hint_to_asserts({hint}, _ns):
-    expected = eval(expected_raw, dict(_ns))
+    expected = _safe_eval(expected_raw, dict(_ns))
     ops = {{
         "==": lambda a, b: a == b, "!=": lambda a, b: a != b,
         ">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b,
