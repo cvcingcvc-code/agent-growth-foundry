@@ -33,7 +33,7 @@
 
 ### Phase 2：训练与评估升级
 
-- [ ] V2-2-1：train_lora.py 增加 lr-search / rank / alpha / early-stop / curriculum / 训练曲线
+- [ ] V2-2-1：训练入口已实现 lr-search / rank / alpha / early-stop / curriculum / PNG 曲线。v4 门控验证为 835 条训练记录（1,045 个回答目标）和 54 条验证记录。`python -m pytest -q` 通过 170 项、跳过 4 项。随机初始化的极小 Qwen3 在 CPU 冒烟中验证了早停（第 4 epoch）、适配器保存和 PNG 输出。当前环境无 CUDA，v4 四组 GPU 实验及实测学习率仍待验收。
 - [ ] V2-2-2：新建 scripts/eval_comprehensive.py 综合评估（pass@1 / pass@5 / 执行通过率）
 - [ ] V2-2-3：run_growth_loop.py 接入新回归集 + 综合评估门控
 - [ ] V2-2-4：首次冠军换代尝试（v4 训练 → 全链路评估 → PROMOTE 或 HOLD 记录）

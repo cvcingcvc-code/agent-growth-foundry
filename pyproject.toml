@@ -11,7 +11,7 @@ dependencies = []
 
 [project.optional-dependencies]
 smoke = ["torch>=2.2"]
-train = ["torch>=2.2", "transformers>=4.51,<6", "peft>=0.17,<1", "accelerate>=1,<2", "safetensors>=0.5"]
+train = ["torch>=2.2", "transformers>=4.51,<6", "peft>=0.17,<1", "accelerate>=1,<2", "safetensors>=0.5", "matplotlib>=3.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
