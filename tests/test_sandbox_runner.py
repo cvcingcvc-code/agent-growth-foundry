@@ -90,6 +90,8 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('forbidden', r['stderr'])
 
     def test_memory_limit_enforced(self):
+        if not sys.platform == 'win32':
+            self.skipTest('memory limit via Job Object requires Windows')
         # 300MB incremental allocation under a 64MB job limit dies fast.
         code = 'buf = []\nfor i in range(20):\n    buf.append(bytearray(16 * 1024 * 1024))\ndef f():\n    return 1'
         r = run_restricted(code, 'f()==1', memory_mb=64, reviewed=True)
