@@ -6,13 +6,30 @@ The bundled 16/4 synthetic examples are strictly pipeline demos.
 from __future__ import annotations
 import argparse
 import json
+import platform
+import os
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+from growthfoundry.config import get_config
 from growthfoundry.dataset import read_approved
 
 
+def _ensure_hf_env(cfg) -> None:
+    """On Windows, pre-set HF env vars to avoid symlink permission issues."""
+    if platform.system() == "Windows":
+        if not os.getenv("HF_HUB_DISABLE_SYMLINKS"):
+            print("[WARN] Windows: auto-setting HF_HUB_DISABLE_SYMLINKS=1 to avoid symlink errors.", flush=True)
+            os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+        if not os.getenv("HF_HUB_DISABLE_XET"):
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
+    if cfg.hf_home:
+        os.environ.setdefault("HF_HOME", cfg.hf_home)
+
+
 def main():
+    cfg = get_config()
+    _ensure_hf_env(cfg)
     p = argparse.ArgumentParser()
     p.add_argument('--dataset', default='data/seed/sft_examples.jsonl')
     p.add_argument('--model', default='Qwen/Qwen3-0.6B')

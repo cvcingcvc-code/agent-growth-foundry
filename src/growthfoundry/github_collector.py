@@ -10,9 +10,12 @@ import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+from .config import get_config
 
 REPO_RE = re.compile(r'^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$')
-MAX_RETRIES = 3  # hard cap; never loop indefinitely
+# MAX_RETRIES is now read from GFConfig (GF_MAX_RETRIES env var, default 3).
+# The constant is kept as a safety hard cap only.
+_HARD_CAP_RETRIES = 5
 
 
 def _headers(token: str | None = None, etag: str | None = None) -> dict:
@@ -53,16 +56,20 @@ def _save_cache(path: Path, cache: dict):
 
 def get_repo_metadata_cached(slug: str, token: str | None = None,
                              cache_path: str | Path | None = None,
-                             retries: int = MAX_RETRIES) -> dict:
+                             retries: int | None = None) -> dict:
     """Metadata-only fetch with ETag/If-None-Match conditional requests and
     bounded backoff on HTTP 429 / 5xx. Cache stores {slug: {etag, item}}.
 
+    ``retries`` defaults to ``GFConfig.max_retries`` (env var ``GF_MAX_RETRIES``).
     Metadata-only boundary unchanged: no source code or content is downloaded.
     """
+    cfg = get_config()
+    max_ret = cfg.max_retries if retries is None else retries
+    max_ret = min(max_ret, _HARD_CAP_RETRIES)
     if not REPO_RE.fullmatch(slug):
         raise ValueError('Expected owner/repo GitHub identifier')
-    if retries < 0 or retries > MAX_RETRIES:
-        raise ValueError(f'retries must be within 0..{MAX_RETRIES}')
+    if max_ret < 0:
+        raise ValueError('retries must be >= 0')
     backoff = 2.0
     etag = None
     cached = None
@@ -71,7 +78,7 @@ def get_repo_metadata_cached(slug: str, token: str | None = None,
         if cached:
             etag = cached.get('etag')
     last_error: Exception | None = None
-    for attempt in range(retries + 1):
+    for attempt in range(max_ret + 1):
         req = Request(f'https://api.github.com/repos/{slug}',
                       headers=_headers(token, etag))
         try:
@@ -90,8 +97,8 @@ def get_repo_metadata_cached(slug: str, token: str | None = None,
                 return dict(cached['item'])
             # 429 rate limit or transient 5xx: bounded backoff then retry
             if ex.code == 429 or ex.code >= 500:
-                last_error = RuntimeError(f'GitHub API HTTP {ex.code}; retry {attempt+1}/{retries}')
-                if attempt < retries:
+                last_error = RuntimeError(f'GitHub API HTTP {ex.code}; retry {attempt+1}/{max_ret}')
+                if attempt < max_ret:
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 8.0)
                     continue

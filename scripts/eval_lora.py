@@ -6,10 +6,24 @@ Base model can run on CPU or GPU; adapter inference prefers GPU when available.
 from __future__ import annotations
 import argparse
 import json
+import platform
+import os
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+from growthfoundry.config import get_config
 from growthfoundry.dataset import read_approved
+
+
+def _ensure_hf_env(cfg) -> None:
+    if platform.system() == "Windows":
+        if not os.getenv("HF_HUB_DISABLE_SYMLINKS"):
+            print("[WARN] Windows: auto-setting HF_HUB_DISABLE_SYMLINKS=1 to avoid symlink errors.", flush=True)
+            os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+        if not os.getenv("HF_HUB_DISABLE_XET"):
+            os.environ["HF_HUB_DISABLE_XET"] = "1"
+    if cfg.hf_home:
+        os.environ.setdefault("HF_HOME", cfg.hf_home)
 
 
 def build_comparison_report(records, base_answers, adapter_answers, adapter_dir, device_note,
@@ -45,6 +59,8 @@ def dataset_sha256_of(path) -> str:
 
 
 def main():
+    cfg = get_config()
+    _ensure_hf_env(cfg)
     p = argparse.ArgumentParser()
     p.add_argument('--dataset', default='data/seed/sft_examples.jsonl')
     p.add_argument('--model', default='Qwen/Qwen3-0.6B')
@@ -52,6 +68,7 @@ def main():
     p.add_argument('--output', default='outputs/base_vs_lora_eval.json')
     p.add_argument('--max-new-tokens', type=int, default=96)
     a = p.parse_args()
+    _ensure_hf_env(get_config())
 
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
