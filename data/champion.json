@@ -1,0 +1,13 @@
+{
+  "adapter": "models/qwen3-0.6b-lora-v0",
+  "base_model": "Qwen/Qwen3-0.6B",
+  "promoted_at": "2026-10-21T12:00:00+00:00",
+  "approved_by": "human_operator",
+  "eval_loss": 5.197,
+  "evidence": [
+    "docs/TRAINING_RECORD_2026-10-21.md",
+    "models/qwen3-0.6b-lora-v0/training_report.json",
+    "outputs/base_vs_lora_eval.json"
+  ],
+  "note": "v0 is the first GPU-trained adapter and the initial champion. v1/v2 were HOLD (regression gate). This file is the champion pointer; changes require human approval."
+}
